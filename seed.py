@@ -1,7 +1,4 @@
-"""
-seed.py — Run once to populate the database with sample data.
-Usage: python seed.py
-"""
+
 
 import sys
 import os
