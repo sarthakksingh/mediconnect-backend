@@ -239,14 +239,201 @@ This will populate:
 
 ---
 
+## 🔥 API Request / Response Examples
+
+### 1. Register User
+
+**Request**
+
+```json
+POST /auth/register
+{
+  "name": "Sarthak Singh",
+  "email": "sarthak@example.com",
+  "password": "password123",
+  "role": "PATIENT"
+}
+```
+
+**Response**
+
+```json
+{
+  "message": "User registered successfully"
+}
+```
+
+---
+
+### 2. Login
+
+**Request**
+
+```json
+POST /auth/login
+{
+  "email": "sarthak@example.com",
+  "password": "password123"
+}
+```
+
+**Response**
+
+```json
+{
+  "access_token": "jwt_token_here",
+  "token_type": "bearer"
+}
+```
+
+---
+
+### 3. Get Doctors
+
+```http
+GET /doctors
+```
+
+**Response**
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Dr. Rahul Sharma",
+    "specialization": "Cardiology"
+  }
+]
+```
+
+---
+
+### 4. Book Appointment
+
+**Request**
+
+```json
+POST /appointments/book
+{
+  "patient_id": 1,
+  "doctor_id": 2,
+  "date_time": "2026-03-25T10:00:00"
+}
+```
+
+**Response**
+
+```json
+{
+  "message": "Appointment booked successfully",
+  "appointment_id": 101
+}
+```
+
+---
+
+### 5. Reschedule Appointment
+
+```json
+PUT /appointments/reschedule
+{
+  "appointment_id": 101,
+  "new_time": "2026-03-26T11:00:00"
+}
+```
+
+---
+
+## 🧪 Postman Collection (Import Ready)
+
+```json
+{
+  "info": {
+    "name": "MediConnect API",
+    "_postman_id": "12345",
+    "description": "Hospital Appointment APIs",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Register",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/auth/register",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"name\":\"Test\",\"email\":\"test@test.com\",\"password\":\"123456\",\"role\":\"PATIENT\"}"
+        }
+      }
+    },
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/auth/login"
+      }
+    },
+    {
+      "name": "Get Doctors",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/doctors"
+      }
+    },
+    {
+      "name": "Book Appointment",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/appointments/book"
+      }
+    }
+  ]
+}
+```
+
+## 📈 Architecture Diagram
+
+```text
+            ┌────────────────────┐
+            │   Frontend (UI)    │
+            │ HTML / CSS / JS    │
+            └─────────┬──────────┘
+                      │ REST API
+                      ▼
+            ┌────────────────────┐
+            │   FastAPI Backend  │
+            │  Auth + Logic + DB │
+            └─────────┬──────────┘
+                      │
+          ┌───────────┴────────────┐
+          ▼                        ▼
+ ┌───────────────┐        ┌────────────────┐
+ │ PostgreSQL DB │        │   n8n Agent    │
+ │ Appointments  │        │ Automation/AI  │
+ └───────────────┘        └────────────────┘
+                                   │
+                                   ▼
+                          Notifications (SMS/Email)
+```
+
+---
+
+
+
+
 ## 🚧 Future Improvements
 
+
+* Personalized dashboard
+* Medicine Tracker
+* Dockerfile for FastAPI backend
+* Docker Compose setup with PostgreSQL
+* One-command local environment setup
+* AI assistant 
 * JWT refresh tokens
 * Role-based access control (RBAC)
 * Rate limiting
-* Logging & monitoring
-* Deployment (Docker + AWS)
-* AI assistant endpoints
+
 
 ---
 
