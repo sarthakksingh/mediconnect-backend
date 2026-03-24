@@ -3,10 +3,12 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
-from app.schemas import UserRegister, UserLogin, TokenResponse
+from app.schemas import UserRegister, UserLogin, TokenResponse, FirebaseLoginRequest
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from slowapi import Limiter
+from app.firebase_auth import verify_firebase_token
+import os
 from slowapi.util import get_remote_address
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -103,6 +105,49 @@ def login(request: Request, data: UserLogin, db: Session = Depends(get_db)):
 
     token = create_token({"sub": str(user.id), "role": user.role})
 
+    return TokenResponse(
+        access_token=token,
+        user_id=user.id,
+        name=user.name,
+        role=user.role
+    )
+
+@router.post("/google-login", response_model=TokenResponse)
+def google_login(data: FirebaseLoginRequest, db: Session = Depends(get_db)):
+    """
+    Accepts a Firebase ID token from frontend Google Sign-In.
+    Verifies it with Firebase Admin SDK.
+    Creates user in DB if first time, then returns our own JWT.
+    """
+    # Verify token with Firebase
+    decoded = verify_firebase_token(data.id_token)
+ 
+    email = decoded.get("email")
+    name = decoded.get("name", email)
+    picture = decoded.get("picture", "")
+ 
+    if not email:
+        raise HTTPException(status_code=400, detail="Email not found in token")
+ 
+    # Check if user exists, create if not
+    user = db.query(User).filter(User.email == email).first()
+ 
+    if not user:
+        # First time Google login — auto create account
+        user = User(
+            name=name,
+            email=email,
+            phone=None,
+            hashed_password=hash_password(os.urandom(32).hex()),  # random password
+            role="PATIENT"
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+ 
+    # Issue our own JWT
+    token = create_token({"sub": str(user.id), "role": user.role})
+ 
     return TokenResponse(
         access_token=token,
         user_id=user.id,

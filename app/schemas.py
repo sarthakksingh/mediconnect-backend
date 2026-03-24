@@ -52,3 +52,7 @@ class AvailabilitySet(BaseModel):
 class ReportReady(BaseModel):
     appointment_id: int
     report_ready_date: datetime
+    
+
+class FirebaseLoginRequest(BaseModel):
+    id_token: str
