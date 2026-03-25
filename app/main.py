@@ -5,6 +5,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.database import Base, engine
 from app import patient, doctor, auth
+from app import doctor_routes  # ← new authenticated doctor router
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -12,7 +13,6 @@ app = FastAPI(title="🏥 MediConnect API")
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,19 +27,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 Base.metadata.create_all(bind=engine)
-
 
 app.include_router(auth.router)
 app.include_router(patient.router)
 app.include_router(doctor.router)
+app.include_router(doctor_routes.router)   # ← /doctor/* authenticated routes
 
 
 @app.get("/")
 def home():
     return {"status": "MediConnect Backend Running Successfully 🚀"}
-
 
 
 @app.middleware("http")

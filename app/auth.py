@@ -2,13 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User
+from app.models import User, Doctor
 from app.schemas import UserRegister, UserLogin, TokenResponse, FirebaseLoginRequest
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from slowapi import Limiter
 from app.firebase_auth import verify_firebase_token
-import os
 from slowapi.util import get_remote_address
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -20,13 +19,12 @@ load_dotenv()
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_key")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", 60))
-
+DOCTOR_SECRET_CODE = os.getenv("DOCTOR_SECRET_CODE", "")  # set this in your .env
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -67,6 +65,21 @@ def get_current_user(
     return user
 
 
+def require_role(*allowed_roles: str):
+    """
+    FastAPI dependency factory. Usage:
+        @router.get("/doctor/something")
+        def my_route(current_user: User = Depends(require_role("DOCTOR"))):
+    """
+    def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied. Required role: {' or '.join(allowed_roles)}"
+            )
+        return current_user
+    return dependency
+
 
 @router.post("/register", status_code=201)
 def register(data: UserRegister, db: Session = Depends(get_db)):
@@ -77,19 +90,50 @@ def register(data: UserRegister, db: Session = Depends(get_db)):
             detail="Email already registered"
         )
 
+    # Determine role — never trust client-sent role directly
+    role = "PATIENT"
+    if data.doctor_code:
+        if not DOCTOR_SECRET_CODE:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Doctor registration is not configured on this server"
+            )
+        if data.doctor_code != DOCTOR_SECRET_CODE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid doctor registration code"
+            )
+        role = "DOCTOR"
+
     user = User(
         name=data.name,
         email=data.email,
         phone=data.phone,
         hashed_password=hash_password(data.password),
-        role=data.role
+        role=role
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    return {"message": "User registered successfully", "user_id": user.id}
+    # If registering as a doctor, create a linked Doctor row automatically
+    if role == "DOCTOR":
+        doctor_entry = Doctor(
+            name=data.name,
+            user_id=user.id,  # see models.py — add this column
+            specialization=None,
+            experience_years=0,
+            patients_count=0,
+            availability={}
+        )
+        db.add(doctor_entry)
+        db.commit()
 
+    return {
+        "message": "Account created successfully",
+        "user_id": user.id,
+        "role": role
+    }
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -112,20 +156,17 @@ def login(request: Request, data: UserLogin, db: Session = Depends(get_db)):
         role=user.role
     )
 
+
 @router.post("/google-login", response_model=TokenResponse)
 def google_login(data: FirebaseLoginRequest, db: Session = Depends(get_db)):
- 
-    # Verify token with Firebase
     decoded = verify_firebase_token(data.id_token)
- 
+
     email = decoded.get("email")
     name = decoded.get("name", email)
-    picture = decoded.get("picture", "")
- 
+
     if not email:
         raise HTTPException(status_code=400, detail="Email not found in token")
- 
-    # Check if user exists, create if not
+
     user = db.query(User).filter(User.email == email).first()
 
     if not user:
@@ -142,12 +183,10 @@ def google_login(data: FirebaseLoginRequest, db: Session = Depends(get_db)):
             db.refresh(user)
         except Exception:
             db.rollback()
-            # User was created by a concurrent request, just fetch them
             user = db.query(User).filter(User.email == email).first()
 
-    # Issue our own JWT
     token = create_token({"sub": str(user.id), "role": user.role})
- 
+
     return TokenResponse(
         access_token=token,
         user_id=user.id,

@@ -1,15 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Doctor, Appointment, User
-from app.schemas import AppointmentCreate, AppointmentReschedule
+from app.models import Doctor, Appointment, User, Medicine
+from app.schemas import (
+    AppointmentCreate, AppointmentReschedule,
+    UserProfileOut, UserProfileUpdate,
+    MedicineCreate, MedicineOut, MedicineUpdate,
+    HealthScoreOut
+)
 from app.agent import trigger_agent
 from app.auth import get_current_user
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+from typing import List 
 
 router = APIRouter(prefix="", tags=["Patient"])
 
 
+# ─── Doctors ─────────────────────────────────────────────
 
 @router.get("/doctors")
 def get_doctors(db: Session = Depends(get_db)):
@@ -24,13 +31,44 @@ def get_availability(doctor_id: int, db: Session = Depends(get_db)):
     return {"doctor_id": doctor_id, "availability": doctor.availability}
 
 
+# ─── Profile ─────────────────────────────────────────────
+
+@router.get("/users/me", response_model=UserProfileOut)
+def get_my_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Return full profile of the logged-in user."""
+    return current_user
+
+
+@router.patch("/users/me", response_model=UserProfileOut)
+def update_my_profile(
+    data: UserProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update editable profile fields. Only provided fields are updated."""
+    update_data = data.dict(exclude_unset=True)
+
+    for field, value in update_data.items():
+        setattr(current_user, field, value)
+
+    db.commit()
+    db.refresh(current_user)
+
+    # Keep localStorage in sync — frontend uses the name
+    return current_user
+
+
+# ─── Appointments ─────────────────────────────────────────
+
 @router.post("/appointments/book", status_code=201)
 def book_appointment(
     data: AppointmentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-
     if current_user.id != data.patient_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -68,7 +106,6 @@ def book_appointment(
     return {"message": "Appointment Booked Successfully", "appointment_id": appt.id}
 
 
-
 @router.put("/appointments/reschedule")
 def reschedule_appointment(
     data: AppointmentReschedule,
@@ -78,7 +115,6 @@ def reschedule_appointment(
     appt = db.query(Appointment).filter(Appointment.id == data.appointment_id).first()
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
-
 
     if appt.patient_id != current_user.id:
         raise HTTPException(
@@ -99,14 +135,12 @@ def reschedule_appointment(
     return {"message": "Appointment Rescheduled Successfully"}
 
 
-
 @router.get("/appointments/my/{patient_id}")
 def get_my_appointments(
     patient_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-
     if current_user.id != patient_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -115,7 +149,7 @@ def get_my_appointments(
 
     appointments = db.query(Appointment).filter(
         Appointment.patient_id == patient_id
-    ).all()
+    ).order_by(Appointment.date_time.desc()).all()
 
     result = []
     for appt in appointments:
@@ -130,7 +164,6 @@ def get_my_appointments(
         })
 
     return result
-
 
 
 @router.put("/appointments/cancel/{appointment_id}")
@@ -153,7 +186,6 @@ def cancel_appointment(
     db.commit()
 
     return {"message": "Appointment Cancelled Successfully"}
-
 
 
 @router.get("/appointments/tomorrow")
@@ -181,3 +213,136 @@ def get_tomorrow_appointments(db: Session = Depends(get_db)):
         })
 
     return result
+
+
+# ─── Medicines ────────────────────────────────────────────
+
+@router.post("/medicines", response_model=MedicineOut, status_code=201)
+def add_medicine(
+    data: MedicineCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    med = Medicine(
+        patient_id=current_user.id,
+        name=data.name,
+        dosage=data.dosage,
+        frequency=data.frequency,
+        start_date=data.start_date or date.today(),
+        end_date=data.end_date,
+        is_active=True,
+        notes=data.notes
+    )
+    db.add(med)
+    db.commit()
+    db.refresh(med)
+    return med
+
+
+@router.get("/medicines/my", response_model=List[MedicineOut])
+def get_my_medicines(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    return db.query(Medicine).filter(
+        Medicine.patient_id == current_user.id
+    ).order_by(Medicine.is_active.desc(), Medicine.start_date.desc()).all()
+
+
+@router.patch("/medicines/{medicine_id}", response_model=MedicineOut)
+def update_medicine(
+    medicine_id: int,
+    data: MedicineUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    med = db.query(Medicine).filter(
+        Medicine.id == medicine_id,
+        Medicine.patient_id == current_user.id
+    ).first()
+    if not med:
+        raise HTTPException(status_code=404, detail="Medicine not found")
+
+    for field, value in data.dict(exclude_unset=True).items():
+        setattr(med, field, value)
+
+    db.commit()
+    db.refresh(med)
+    return med
+
+
+@router.delete("/medicines/{medicine_id}", status_code=204)
+def delete_medicine(
+    medicine_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    med = db.query(Medicine).filter(
+        Medicine.id == medicine_id,
+        Medicine.patient_id == current_user.id
+    ).first()
+    if not med:
+        raise HTTPException(status_code=404, detail="Medicine not found")
+
+    db.delete(med)
+    db.commit()
+
+
+# ─── Health Score ─────────────────────────────────────────
+
+@router.get("/health-score", response_model=HealthScoreOut)
+def get_health_score(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Score breakdown (all out of 100):
+      - Completion rate  → 50 pts  (completed / total non-cancelled appts)
+      - Adherence score  → 30 pts  (active medicines / total medicines, or 100% if none)
+      - Streak score     → 20 pts  (has upcoming confirmed/pending appt = 20, else 0)
+    """
+    appointments = db.query(Appointment).filter(
+        Appointment.patient_id == current_user.id
+    ).all()
+
+    non_cancelled = [a for a in appointments if a.status != "cancelled"]
+    completed = [a for a in non_cancelled if a.status == "completed"]
+
+    completion_rate = (len(completed) / len(non_cancelled) * 100) if non_cancelled else 0.0
+
+    # Adherence: ratio of active medicines to total; 100% if patient has no medicines yet
+    medicines = db.query(Medicine).filter(
+        Medicine.patient_id == current_user.id
+    ).all()
+    active_meds = [m for m in medicines if m.is_active]
+    adherence_rate = (len(active_meds) / len(medicines) * 100) if medicines else 100.0
+
+    # Streak: does the patient have an upcoming appointment?
+    now = datetime.utcnow()
+    upcoming = [
+        a for a in appointments
+        if a.date_time > now and a.status in ("pending", "confirmed", "rescheduled")
+    ]
+    streak_score = 100.0 if upcoming else 0.0
+
+    # Weighted total
+    total = (
+        completion_rate * 0.50 +
+        adherence_rate  * 0.30 +
+        streak_score    * 0.20
+    )
+
+    return HealthScoreOut(
+        score=round(total),
+        completion_rate=round(completion_rate, 1),
+        adherence_score=round(adherence_rate, 1),
+        streak_score=round(streak_score, 1),
+        breakdown={
+            "total_appointments": len(non_cancelled),
+            "completed_appointments": len(completed),
+            "total_medicines": len(medicines),
+            "active_medicines": len(active_meds),
+            "has_upcoming": len(upcoming) > 0,
+            "upcoming_count": len(upcoming)
+        }
+    )
